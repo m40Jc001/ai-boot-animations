@@ -86,7 +86,8 @@ jobs:
                 $prev = $y
               }
             }
-            "[$mode] 亮度跳变 >3 的帧：$($rows.Count)" | Tee-Object -Append out\seam\summary.txt
+            # 字符串里别写中文：Windows PowerShell 5.1 按 ANSI 读脚本，中文会把引号吃掉
+            "[$mode] frames with brightness jump > 3: $($rows.Count)" | Tee-Object -Append out\seam\summary.txt
             $rows | Select-Object -First 40 | Tee-Object -Append out\seam\summary.txt
             Remove-Item out\seam\$mode.mp4 -ErrorAction SilentlyContinue   # 录屏不推到仓库，只留数据
           }
