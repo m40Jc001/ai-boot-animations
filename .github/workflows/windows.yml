@@ -22,6 +22,7 @@ jobs:
           $env:Path += ";C:\ProgramData\chocolatey\bin"
           ffmpeg -v error -y -i claude\assets\intro.mp4 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -c:a copy claude\windows\assets\intro.mp4
           ffmpeg -v error -y -i claude\assets\loop.mp4 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an claude\windows\assets\loop.mp4
+          ffmpeg -v error -y -stream_loop 1 -i claude\assets\loop.mp4 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an claude\windows\assets\loop-x2.mp4
           Get-ChildItem claude\windows\assets
       - name: 媒体组件（服务器版 Windows 默认没装）
         continue-on-error: true
@@ -56,6 +57,40 @@ jobs:
           $app = Start-Process build\ClaudeBootAnimation.exe -PassThru -ArgumentList "--target-title Notepad --play loop --exit-after 14 --shot-at 2,6,12 --shot-dir `"$pwd\out\loop`"" 
           $app | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue; $app | Stop-Process -Force -ErrorAction SilentlyContinue
           Stop-Process $np -Force
+      - name: 循环接缝检测（老办法 vs 重叠交接，录屏逐帧看亮度突变）
+        run: |
+          $env:Path += ";C:\ProgramData\chocolatey\bin"
+          $cfgDir = "$env:APPDATA\ClaudeBootAnimation"
+          New-Item -ItemType Directory -Force $cfgDir, out\seam | Out-Null
+          $cfgBak = "$cfgDir\config.json.bak"
+          if (Test-Path "$cfgDir\config.json") { Copy-Item "$cfgDir\config.json" $cfgBak -Force }
+          # 背景调成完全不透明：漏一帧就会露出记事本的白底，亮度一下跳很多
+          Set-Content "$cfgDir\config.json" '{ "residualAlpha" : 1.0 }' -Encoding UTF8
+          foreach ($mode in @('legacy', 'overlap')) {
+            $np = Start-Process notepad -WindowStyle Maximized -PassThru
+            Start-Sleep 3
+            $extra = if ($mode -eq 'legacy') { ' --legacy-loop' } else { '' }
+            $app = Start-Process build\ClaudeBootAnimation.exe -PassThru -ArgumentList ("--target-title Notepad --play loop --exit-after 32" + $extra)
+            Start-Sleep 4   # 等淡入结束
+            $rec = Start-Process ffmpeg -PassThru -NoNewWindow -ArgumentList "-v error -y -f gdigrab -framerate 60 -t 26 -i desktop -vf scale=320:-1 -c:v libx264 -preset ultrafast -crf 18 out\seam\$mode.mp4"
+            $rec | Wait-Process -Timeout 60 -ErrorAction SilentlyContinue
+            $app | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue; $app | Stop-Process -Force -ErrorAction SilentlyContinue
+            Stop-Process $np -Force -ErrorAction SilentlyContinue
+            ffmpeg -v error -i out\seam\$mode.mp4 -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=out/seam/$mode-yavg.txt" -f null -
+            $t = $null; $prev = $null; $rows = @()
+            foreach ($line in Get-Content "out\seam\$mode-yavg.txt") {
+              if ($line -match 'pts_time:([0-9.]+)') { $t = [double]$matches[1] }
+              elseif ($line -match 'YAVG=([0-9.]+)') {
+                $y = [double]$matches[1]
+                if ($prev -ne $null -and [Math]::Abs($y - $prev) -gt 3) { $rows += ('t={0:N3}s  {1:N1} -> {2:N1}' -f $t, $prev, $y) }
+                $prev = $y
+              }
+            }
+            "[$mode] 亮度跳变 >3 的帧：$($rows.Count)" | Tee-Object -Append out\seam\summary.txt
+            $rows | Select-Object -First 40 | Tee-Object -Append out\seam\summary.txt
+            Remove-Item out\seam\$mode.mp4 -ErrorAction SilentlyContinue   # 录屏不推到仓库，只留数据
+          }
+          if (Test-Path $cfgBak) { Move-Item $cfgBak "$cfgDir\config.json" -Force } else { Remove-Item "$cfgDir\config.json" -ErrorAction SilentlyContinue }
       - name: 收集日志
         if: always()
         run: |

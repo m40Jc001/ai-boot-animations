@@ -20,7 +20,8 @@ cp -R windows/src windows/build.ps1 windows/install.ps1 windows/uninstall.ps1 "$
 cp windows/assets/LibreBodoni-Italic.ttf windows/assets/LibreBodoni-OFL.txt "$WOUT/assets/"
 cp ../LICENSE "$WOUT/"; cp assets/LICENSE.md "$WOUT/ASSETS-LICENSE.md"
 ffmpeg -v error -y -i assets/intro.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 160k "$WOUT/assets/intro.mp4"
-ffmpeg -v error -y -i assets/loop.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -an "$WOUT/assets/loop.mp4"
+# 循环段连放两遍编成一个文件：Windows 版靠两半画面相同做「重叠交接」，接缝不闪（只有 loop.mp4 时退回老办法）
+ffmpeg -v error -y -stream_loop 1 -i assets/loop.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -an "$WOUT/assets/loop-x2.mp4"
 ditto -c -k --norsrc --noextattr --keepParent "$WOUT" build/ClaudeBootAnimation-Windows.zip
 echo "压缩包：build/ClaudeBootAnimation-Windows.zip（$(du -h build/ClaudeBootAnimation-Windows.zip | cut -f1)）"
 
