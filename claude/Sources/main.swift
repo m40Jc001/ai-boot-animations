@@ -294,7 +294,8 @@ func makeBorderlessWindow(_ frame: NSRect) -> NSWindow {
     w.isReleasedWhenClosed = false
     w.level = .normal
     // 让 AppKit 在调度中心暂时隐藏浮层，避免它和目标窗口被分开排列。
-    w.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary, .ignoresCycle]
+    // 只待在目标窗口所在的桌面：切桌面时不会被带到别的桌面闪一下；每次重新显示时搬到当前桌面
+    w.collectionBehavior = [.moveToActiveSpace, .transient, .fullScreenAuxiliary, .ignoresCycle]
     return w
 }
 
@@ -458,6 +459,7 @@ final class Show {
             log("窗口停稳，浮层回来")
         }
         place(t)
+        if overlay.isVisible && !overlay.isOnActiveSpace { overlay.orderOut(nil) }   // 目标窗口被挪到别的桌面：重新显示一次，浮层才会跟过去
         if !overlay.isVisible { overlay.orderFront(nil) }
         // Claude 在前台、窗口也没被别的 App 压着：浮层放到浮动层级，Claude 点击时把自己窗口提上来也盖不过它（否则会被挡住一瞬间，视频层重画时闪黑）
         // 其他情况（Claude 不在前台，或在前台但窗口被别的 App 压着）：降回普通层级，紧贴在 Claude 窗口上方，不会盖住别的 App
