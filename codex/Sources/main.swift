@@ -105,7 +105,7 @@ func log(_ msg: String) {
 
 // MARK: - 找 ChatGPT 的主窗口（只读位置、PID、层级，不读标题，不需要任何授权）
 
-struct TargetWindow { let number: Int; let cocoaFrame: NSRect }
+struct TargetWindow { let number: Int; let cocoaFrame: NSRect; let coveredByOtherApp: Bool }
 
 func findTargetWindow(pid: pid_t) -> TargetWindow? {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
@@ -122,9 +122,23 @@ func findTargetWindow(pid: pid_t) -> TargetWindow? {
         if best == nil || r.width * r.height > best!.1.width * best!.1.height { best = (num, r) }
     }
     guard let (num, r) = best, let primary = NSScreen.screens.first else { return nil }
+    // 列表由前到后排；排在 ChatGPT 窗口前面、又和它重叠的别家窗口，代表 ChatGPT 窗口被盖住了
+    let me = getpid()
+    var covered = false
+    for w in list {
+        if (w[kCGWindowNumber as String] as? Int) == num { break }
+        guard let owner = w[kCGWindowOwnerPID as String] as? Int32, owner != pid, owner != me,
+              (w[kCGWindowLayer as String] as? Int) == 0,
+              let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
+        if let a = w[kCGWindowAlpha as String] as? Double, a <= 0 { continue }
+        if CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0).intersects(r) {
+            covered = true; break
+        }
+    }
     // CG 坐标原点在主屏左上角，Cocoa 在主屏左下角
     let y = primary.frame.height - r.origin.y - r.height
-    return TargetWindow(number: num, cocoaFrame: NSRect(x: r.origin.x, y: y, width: r.width, height: r.height))
+    return TargetWindow(number: num, cocoaFrame: NSRect(x: r.origin.x, y: y, width: r.width, height: r.height),
+                        coveredByOtherApp: covered)
 }
 
 // MARK: - 把成片 + 循环拼成一整条（约 8 小时），播放器全程只放一个文件，接缝不会卡；放到头再跳回循环开头
@@ -449,14 +463,14 @@ final class Show {
         }
         place(t)
         if !overlay.isVisible { overlay.orderFront(nil) }
-        // ChatGPT 在前台：浮层放到浮动层级，ChatGPT 点击时把自己窗口提上来也盖不过它（否则会被挡住一瞬间，视频层重画时闪黑）
-        // ChatGPT 不在前台：降回普通层级，紧贴在 ChatGPT 窗口上方，不会盖住别的 App
+        // ChatGPT 在前台、窗口也没被别的 App 压着：浮层放到浮动层级，ChatGPT 点击时把自己窗口提上来也盖不过它（否则会被挡住一瞬间，视频层重画时闪黑）
+        // 其他情况（ChatGPT 不在前台，或在前台但窗口被别的 App 压着）：降回普通层级，紧贴在 ChatGPT 窗口上方，不会盖住别的 App
         let targetFront = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-        let level: NSWindow.Level = targetFront ? .floating : .normal
+        let level: NSWindow.Level = targetFront && !t.coveredByOtherApp ? .floating : .normal
         if overlay.level != level {
             for w in [overlay, subWin, skipWin] { w.level = level }
         }
-        if !targetFront { overlay.order(.above, relativeTo: t.number) }
+        if level == .normal { overlay.order(.above, relativeTo: t.number) }
         if t.number != lastTarget { lastTarget = t.number; log("跟随窗口 \(t.number)") }
     }
 
