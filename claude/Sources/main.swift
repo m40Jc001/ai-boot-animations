@@ -333,6 +333,7 @@ final class Show {
     var lastFrame = NSRect.zero
     var sysAnim = false          // 窗口在做系统动画（最小化、还原、缩放、分屏）时浮层先藏起来
     var stableSince = Date()
+    var followingSpace = false   // 正跟着桌面一起滑，或 Claude 在别的桌面上（只用来让日志只记一次）
 
     init(pid: pid_t, target: TargetWindow, config: Config, withIntro: Bool,
          timeline: Timeline, onDone: @escaping () -> Void) {
@@ -434,12 +435,26 @@ final class Show {
         }
     }
 
+    /// 浮层在系统窗口列表里回报的位置（Cocoa 坐标）。切桌面时系统会把整个桌面连浮层一起平移，回报的位置就会离开 place() 放的地方
+    func overlayFrameOnScreen() -> NSRect? {
+        guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(overlay.windowNumber)) as? [[String: Any]])?.first,
+              let b = info[kCGWindowBounds as String] as? [String: CGFloat],
+              let primary = NSScreen.screens.first else { return nil }
+        let r = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+        return NSRect(x: r.origin.x, y: primary.frame.height - r.origin.y - r.height, width: r.width, height: r.height)
+    }
+
     /// 跟着 Claude 窗口移动/缩放，并保持正好压在它上面（不会盖到别的 App 的窗口）
     func follow() {
         guard phase != .done else { return }
         guard let t = findClaudeWindow(pid: pid) else {
-            if overlay.isVisible { overlay.orderOut(nil) }
-            sysAnim = true; stableSince = Date()   // 再出现时多半是从 Dock 还原的动画，等停稳再露面
+            // 浮层不在当前桌面 = 用户切到别的桌面了：浮层留在 Claude 那个桌面上，切回来时跟着桌面一起滑进来，不用等
+            if overlay.isVisible && !overlay.isOnActiveSpace {
+                if !followingSpace { followingSpace = true; log("Claude 在别的桌面，浮层留在它的桌面上") }
+            } else {
+                if overlay.isVisible { overlay.orderOut(nil) }
+                sysAnim = true; stableSince = Date()   // 再出现时多半是从 Dock 还原的动画，等停稳再露面
+            }
             if NSRunningApplication(processIdentifier: pid) == nil { finish(fast: true) }
             return
         }
@@ -447,6 +462,15 @@ final class Show {
         // 最小化的神灯效果会把窗口拧成漏斗形，矩形视频怎么跟都对不上，干脆先藏起来；
         // 用户自己拖动、拉伸窗口时鼠标是按着的，照常跟随
         let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
+        // 大小没变、鼠标没按着、浮层也被挪离了 place() 放的位置 = 系统正在平移整个桌面（切桌面，含滑到一半停住）：
+        // 浮层和 Claude 窗口会被一起平移，不藏也不动它；滑动中回报的位置不能拿来 place，否则会被移两次
+        if t.cocoaFrame != lastFrame && !sysAnim && overlay.isVisible && !mouseDown
+            && abs(t.cocoaFrame.width - lastFrame.width) < 1 && abs(t.cocoaFrame.height - lastFrame.height) < 1,
+           let o = overlayFrameOnScreen(), abs(o.minX - lastFrame.minX) >= 1 || abs(o.minY - lastFrame.minY) >= 1 {
+            if !followingSpace { followingSpace = true; log("切桌面：浮层跟着桌面一起平移，不藏也不动它") }
+            return
+        }
+        followingSpace = false
         if t.cocoaFrame != lastFrame {
             if !mouseDown && !sysAnim && overlay.isVisible { log("窗口在做系统动画，浮层先藏起来"); sysAnim = true }
             if sysAnim { stableSince = Date(); lastFrame = t.cocoaFrame }
