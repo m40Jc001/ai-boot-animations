@@ -338,7 +338,8 @@ final class Show {
     var lastFrame = NSRect.zero
     var sysAnim = false          // 窗口在做系统动画（最小化、还原、缩放、分屏）时浮层先藏起来
     var stableSince = Date()
-    var followingSpace = false   // 正跟着桌面一起滑，或 Claude 在别的桌面上（只用来让日志只记一次）
+    enum SpaceState { case none, sliding, away }
+    var spaceState = SpaceState.none   // 浮层正跟着桌面一起滑（sliding），或 Claude 已经随桌面滑走、浮层留在它的桌面上（away）
 
     init(pid: pid_t, target: TargetWindow, config: Config, withIntro: Bool,
          timeline: Timeline, onDone: @escaping () -> Void) {
@@ -444,9 +445,10 @@ final class Show {
     func follow() {
         guard phase != .done else { return }
         guard let t = findClaudeWindow(pid: pid, overlay: overlay.windowNumber) else {
-            // 浮层不在当前桌面 = 用户切到别的桌面了：浮层留在 Claude 那个桌面上，切回来时跟着桌面一起滑进来，不用等
-            if overlay.isVisible && !overlay.isOnActiveSpace {
-                if !followingSpace { followingSpace = true; log("Claude 在别的桌面，浮层留在它的桌面上") }
+            // 刚才正跟着桌面滑，或浮层不在当前桌面 = 用户切到别的桌面了：浮层留在 Claude 那个桌面上，切回来时跟着桌面一起滑进来，不用等。
+            // 滑走的那一刻 isOnActiveSpace 可能还没更新，不能单靠它
+            if overlay.isVisible && (spaceState != .none || !overlay.isOnActiveSpace) {
+                if spaceState != .away { spaceState = .away; log("Claude 在别的桌面，浮层留在它的桌面上") }
             } else {
                 if overlay.isVisible { overlay.orderOut(nil) }
                 sysAnim = true; stableSince = Date()   // 再出现时多半是从 Dock 还原的动画，等停稳再露面
@@ -458,17 +460,25 @@ final class Show {
         // 最小化的神灯效果会把窗口拧成漏斗形，矩形视频怎么跟都对不上，干脆先藏起来；
         // 用户自己拖动、拉伸窗口时鼠标是按着的，照常跟随
         let mouseDown = NSEvent.pressedMouseButtons & 1 != 0
-        // 大小没变、鼠标没按着、浮层被挪离了 place() 放的位置，而且挪的距离和 Claude 窗口一样 = 系统正在平移整个桌面（切桌面，含滑到一半停住）：
+        // 大小没变、鼠标没按着，而且浮层被挪离了 place() 放的位置、挪的距离和 Claude 窗口一样 = 系统正在平移整个桌面（切桌面，含滑到一半停住）：
         // 浮层和 Claude 窗口会被一起平移，不藏也不动它；滑动中回报的位置不能拿来 place，否则会被移两次。
+        // 浮层明明显示着、却不在屏幕上的窗口列表里 = 它所在的桌面已经滑出画面，Claude 窗口这时还可能以偏移一整屏的位置留在列表里，一样当成切桌面。
         // 两边挪得不一样多（例如拔掉外接显示器、改分辨率，系统各自挪窗口）就不是切桌面，照下面原本的做法藏起来、停稳再贴回去
+        let movedWithDesktop: Bool
+        if let o = t.overlayFrame {
+            movedWithDesktop = (abs(o.minX - lastFrame.minX) >= 1 || abs(o.minY - lastFrame.minY) >= 1)
+                && abs(o.minX - t.cocoaFrame.minX) < 1 && abs(o.minY - t.cocoaFrame.minY) < 1
+        } else {
+            movedWithDesktop = true
+        }
         if t.cocoaFrame != lastFrame && !sysAnim && overlay.isVisible && !mouseDown
-            && abs(t.cocoaFrame.width - lastFrame.width) < 1 && abs(t.cocoaFrame.height - lastFrame.height) < 1,
-           let o = t.overlayFrame, abs(o.minX - lastFrame.minX) >= 1 || abs(o.minY - lastFrame.minY) >= 1,
-           abs(o.minX - t.cocoaFrame.minX) < 1 && abs(o.minY - t.cocoaFrame.minY) < 1 {
-            if !followingSpace { followingSpace = true; log("切桌面：浮层跟着桌面一起平移，不藏也不动它") }
+            && abs(t.cocoaFrame.width - lastFrame.width) < 1 && abs(t.cocoaFrame.height - lastFrame.height) < 1
+            && movedWithDesktop {
+            if spaceState != .sliding { spaceState = .sliding; log("切桌面：浮层跟着桌面一起平移，不藏也不动它") }
             return
         }
-        followingSpace = false
+        let wasFollowingSpace = spaceState != .none
+        spaceState = .none
         if t.cocoaFrame != lastFrame {
             if !mouseDown && !sysAnim && overlay.isVisible { log("窗口在做系统动画，浮层先藏起来"); sysAnim = true }
             if sysAnim { stableSince = Date(); lastFrame = t.cocoaFrame }
@@ -481,7 +491,8 @@ final class Show {
             log("窗口停稳，浮层回来")
         }
         place(t)
-        if overlay.isVisible && !overlay.isOnActiveSpace { overlay.orderOut(nil) }   // 目标窗口被挪到别的桌面：重新显示一次，浮层才会跟过去
+        // 目标窗口被挪到别的桌面：重新显示一次，浮层才会跟过去。刚跟着桌面滑回来时 isOnActiveSpace 可能还没更新，不能当成被挪走
+        if !wasFollowingSpace && overlay.isVisible && !overlay.isOnActiveSpace { overlay.orderOut(nil) }
         if !overlay.isVisible { overlay.orderFront(nil) }
         // Claude 在前台、窗口也没被别的 App 压着：浮层放到浮动层级，Claude 点击时把自己窗口提上来也盖不过它（否则会被挡住一瞬间，视频层重画时闪黑）
         // 其他情况（Claude 不在前台，或在前台但窗口被别的 App 压着）：降回普通层级，紧贴在 Claude 窗口上方，不会盖住别的 App
