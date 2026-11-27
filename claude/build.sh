@@ -37,7 +37,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Claude 开机动画</string>
   <key>CFBundleExecutable</key><string>ClaudeBootAnimation</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2.3</string>
+  <key>CFBundleShortVersionString</key><string>1.2.6</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
 </dict></plist>

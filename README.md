@@ -6,7 +6,7 @@
 |---|---|---|
 | **Claude** 桌面端 | 月下持剑少女：线稿 → 上色 → 剑光、火凤、烟花，带音效和英文字幕；菜单栏 ✨ 可调背景浓度、开屏音量，可只留动态背景 | [claude/](claude/) |
 | **ChatGPT** 桌面端（含 Codex） | 星空塔罗龙娘：发光线稿 → 展翅、七张牌亮起 → 光带环绕 → 光汇入手心 → 甩牌挡嘴，带音效、英文配音和字幕；菜单栏 🌙 可调，和 Claude 版可以同时装；Mac 和 Windows 都有 | [codex/](codex/) |
-| **Antigravity**（Google 的 AI 编程工具） | Gemini 双剑少女：发光线稿 → 剑尖星芒 → 双剑相击，带音效、英文配音和字幕；菜单栏 ✦ 可调，和 Claude、GPT 版可以同时装；目前只有 Mac 版 | [antigravity/](antigravity/) |
+| **Antigravity**（Google 的 AI 编程工具） | Gemini 双剑少女：发光线稿 → 剑尖星芒 → 双剑相击，带音效、英文配音和字幕；菜单栏 ✦ 可调，和 Claude、GPT 版可以同时装；Mac 和 Windows 都有 | [antigravity/](antigravity/) |
 
 更多动画陆续加入。
 
@@ -51,7 +51,7 @@ cd ai-boot-animations/claude
 
 打不开 raw.githubusercontent.com 的话，把网址换成 `https://cdn.jsdelivr.net/gh/wynneceles/ai-boot-animations@main/claude/windows/web-install.ps1`。
 
-会下载约 37MB，用 Windows 自带的编译器现场编译（不用装任何 SDK），装到 `%LOCALAPPDATA%\Programs\ClaudeBootAnimation`，右下角托盘出现 ✨ 并弹出设置窗口。
+会下载约 48MB，用 Windows 自带的编译器现场编译（不用装任何 SDK），装到**剩余空间最大的非系统盘**（例如 `D:\AIBootAnimations\ClaudeBootAnimation`，只有 C 盘时才装 C 盘；想自己指定位置，先运行 `$env:CBA_DIR='E:\某个文件夹'` 再粘贴安装命令），右下角托盘出现 ✨ 并弹出设置窗口。
 
 ## 菜单栏 ✨ 能干什么
 

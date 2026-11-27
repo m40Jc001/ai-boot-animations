@@ -344,6 +344,7 @@ final class Show {
     var stableSince = Date()
     enum SpaceState { case none, sliding, away }
     var spaceState = SpaceState.none   // 浮层正跟着桌面一起滑（sliding），或 ChatGPT 已经随桌面滑走、浮层留在它的桌面上（away）
+    private(set) var paused = false   // 菜单「暂停循环背景」：画面停在当前这一帧，背景照样盖着
 
     init(pid: pid_t, target: TargetWindow, config: Config, withIntro: Bool,
          timeline: Timeline, onDone: @escaping () -> Void) {
@@ -379,7 +380,7 @@ final class Show {
         // 一整条（约 8 小时）放完后跳回循环段开头继续，背景不会掉
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-            guard let self, self.phase != .done else { return }
+            guard let self, self.phase != .done, !self.paused else { return }
             log("时间线放到头，跳回循环开头继续")
             self.player.seek(to: self.timeline.loopStart, toleranceBefore: .zero, toleranceAfter: .zero)
             self.player.play()
@@ -432,8 +433,20 @@ final class Show {
         tick = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.follow() }
         RunLoop.main.add(tick!, forMode: .common)   // 拖动菜单、窗口时也继续跟随
         activateObs = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.follow() }
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            // 别的 App 到前台：它的窗口可能马上盖到 ChatGPT 上，窗口列表要晚几十毫秒才反映出来，先立刻降回普通层级，免得浮层压在它上面
+            if let self, let app, app.processIdentifier != self.pid, app.processIdentifier != getpid() {
+                self.lastOtherActivation = Date()
+                if self.overlay.level != .normal {
+                    for w in [self.overlay, self.subWin, self.skipWin] { w.level = .normal }
+                    if self.lastTarget >= 0 { self.overlay.order(.above, relativeTo: self.lastTarget) }
+                }
+            }
+            self?.follow()
+        }
     }
+    var lastOtherActivation = Date.distantPast
 
     func place(_ t: TargetWindow) {
         if t.cocoaFrame != lastFrame {
@@ -497,15 +510,20 @@ final class Show {
         place(t)
         // 目标窗口被挪到别的桌面：重新显示一次，浮层才会跟过去。刚跟着桌面滑回来时 isOnActiveSpace 可能还没更新，不能当成被挪走
         if !wasFollowingSpace && overlay.isVisible && !overlay.isOnActiveSpace { overlay.orderOut(nil) }
-        if !overlay.isVisible { overlay.orderFront(nil) }
-        // ChatGPT 在前台、窗口也没被别的 App 压着：浮层放到浮动层级，ChatGPT 点击时把自己窗口提上来也盖不过它（否则会被挡住一瞬间，视频层重画时闪黑）
-        // 其他情况（ChatGPT 不在前台，或在前台但窗口被别的 App 压着）：降回普通层级，紧贴在 ChatGPT 窗口上方，不会盖住别的 App
-        let targetFront = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-        let level: NSWindow.Level = targetFront && !t.coveredByOtherApp ? .floating : .normal
+        // ChatGPT 窗口没被别的 App 压着（不管 ChatGPT 在不在前台）：浮层放到浮动层级，点 ChatGPT 时它把自己窗口提上来也盖不过浮层
+        //   （以前只在 ChatGPT 在前台时才升，别的 App 最小化后再点 ChatGPT，ChatGPT 会先盖过浮层一两帧，看着就是闪黑）
+        // 被别的 App 压着：降回普通层级，紧贴在 ChatGPT 窗口上方，不会盖住别的 App（这种情况点 ChatGPT 仍可能轻微闪一下：ChatGPT 提窗口比外部程序快，抢不过）
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+        // 别的 App 刚到前台的 0.3 秒内先不升（它的窗口可能正要盖上来，窗口列表还没反映）；ChatGPT 自己在前台不受限
+        let otherJustActivated = frontPID != pid && Date().timeIntervalSince(lastOtherActivation) < 0.3
+        let level: NSWindow.Level = !t.coveredByOtherApp && !otherJustActivated ? .floating : .normal
+        // 先把层级定好再显示，直接排到最终位置，不经过「先到最前面、再退回 ChatGPT 上方」的中间状态
         if overlay.level != level {
             for w in [overlay, subWin, skipWin] { w.level = level }
         }
+        let wasVisible = overlay.isVisible
         if level == .normal { overlay.order(.above, relativeTo: t.number) }
+        else if !wasVisible { overlay.orderFront(nil) }
         if t.number != lastTarget { lastTarget = t.number; log("跟随窗口 \(t.number)") }
     }
 
@@ -584,6 +602,14 @@ final class Show {
             overlay.animator().alphaValue = config.residualAlpha
         }
         // 开屏音效（冲击声、闪光）照常放完，等进入循环文件再换音量
+    }
+
+    /// 暂停 / 继续循环背景。只在循环背景阶段有用；开屏还在放时不让暂停
+    func setPaused(_ p: Bool) {
+        guard phase == .revealed, p != paused else { return }
+        paused = p
+        if p { player.pause() } else { player.play() }
+        log(p ? "暂停循环背景" : "继续播放循环背景")
     }
 
     /// 菜单里拖滑块时实时生效
@@ -727,7 +753,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var introItem: NSMenuItem!
     var loopItem: NSMenuItem!
-    var stopItem: NSMenuItem!
+    var loopNowItem: NSMenuItem!   // 开着背景时是「关掉循环背景」，没开时是「开启循环背景」
+    var pauseItem: NSMenuItem!
     var alphaRow: SliderRow!
     var introVolRow: SliderRow!
     var show: Show?
@@ -847,6 +874,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.isVisible = targetRunning
         statusItem.button?.image = NSImage(systemSymbolName: "moon.stars", accessibilityDescription: "GPT 开机动画")   // 不用 ✨，和 Claude 版区分开
         let m = NSMenu(); m.delegate = self
+        m.autoenablesItems = false   // 「暂停」在没开背景时要变灰，由 refreshMenu 自己定
 
         let h1 = NSMenuItem(title: "打开 ChatGPT 时", action: nil, keyEquivalent: ""); h1.isEnabled = false
         m.addItem(h1)
@@ -865,8 +893,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let h2 = NSMenuItem(title: "现在，在 ChatGPT 窗口上", action: nil, keyEquivalent: ""); h2.isEnabled = false
         m.addItem(h2)
         item("播放一次开屏动画", #selector(previewIntro), m)
-        item("开启循环背景", #selector(previewLoop), m)
-        stopItem = item("关掉动画 / 背景", #selector(stopShow), m)
+        loopNowItem = item("开启循环背景", #selector(toggleLoopNow), m)
+        pauseItem = item("暂停循环背景", #selector(togglePause), m)
         m.addItem(.separator())
         item("设置窗口…", #selector(openSettings), m)
         item("打开设置文件…", #selector(openConfig), m)
@@ -895,7 +923,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings?.refresh()
         introItem.state = config.playIntro ? .on : .off
         loopItem.state = config.loopBackground ? .on : .off
-        stopItem.isEnabled = show != nil
+        // 正在放（开屏或循环背景）就显示「关掉…」，没在放就显示「开启循环背景」
+        let s = show.flatMap { $0.phase == .intro || $0.phase == .revealed ? $0 : nil }
+        loopNowItem.title = s == nil ? "开启循环背景" : (s!.phase == .intro ? "关掉开屏动画" : "关掉循环背景")
+        pauseItem.title = s?.paused == true ? "继续播放循环背景" : "暂停循环背景"
+        pauseItem.isEnabled = s?.phase == .revealed
         alphaRow.slider.doubleValue = config.residualAlpha; alphaRow.refreshLabel()
         introVolRow.slider.doubleValue = config.introVolume; introVolRow.refreshLabel()
     }
@@ -909,6 +941,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func previewIntro() { show?.teardown(); _ = startOnCurrentWindow(withIntro: true, exitWhenDone: false) }
     @objc func previewLoop() { show?.teardown(); _ = startOnCurrentWindow(withIntro: false, exitWhenDone: false) }
     @objc func stopShow() { show?.finish(fast: true) }
+    @objc func toggleLoopNow() {
+        if let s = show, s.phase == .intro || s.phase == .revealed { s.finish(fast: true) } else { previewLoop() }
+    }
+    @objc func togglePause() { guard let s = show else { return }; s.setPaused(!s.paused) }
     @objc func openConfig() { NSWorkspace.shared.open(Config.file) }
 
     /// 彻底卸载：删登录项、小程序、设置、日志，然后退出。ChatGPT.app 从来没被改过，不用还原。

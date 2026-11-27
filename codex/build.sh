@@ -37,7 +37,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>GPT 开机动画</string>
   <key>CFBundleExecutable</key><string>GPTBootAnimation</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2.2</string>
+  <key>CFBundleShortVersionString</key><string>1.2.5</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
 </dict></plist>

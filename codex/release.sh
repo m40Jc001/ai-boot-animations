@@ -21,6 +21,8 @@ cp windows/assets/LibreBodoni-Italic.ttf windows/assets/LibreBodoni-OFL.txt "$WO
 cp ../LICENSE "$WOUT/"; cp assets/LICENSE.md "$WOUT/ASSETS-LICENSE.md"
 ffmpeg -v error -y -i assets/intro.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 160k "$WOUT/assets/intro.mp4"
 ffmpeg -v error -y -i assets/loop.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -an "$WOUT/assets/loop.mp4"
+# 循环段连放两遍编成一个文件：Windows 版靠两半画面相同做「重叠交接」，接缝不闪（要比 loop.mp4 后生成，程序按修改时间判断用哪个）
+ffmpeg -v error -y -stream_loop 1 -i assets/loop.mp4 -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart -an "$WOUT/assets/loop-x2.mp4"
 ditto -c -k --norsrc --noextattr --keepParent "$WOUT" build/GPTBootAnimation-Windows.zip
 echo "压缩包：build/GPTBootAnimation-Windows.zip（$(du -h build/GPTBootAnimation-Windows.zip | cut -f1)）"
 
