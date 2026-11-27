@@ -440,7 +440,10 @@ final class Show {
                 self.lastOtherActivation = Date()
                 if self.overlay.level != .normal {
                     for w in [self.overlay, self.subWin, self.skipWin] { w.level = .normal }
-                    if self.lastTarget >= 0 { self.overlay.order(.above, relativeTo: self.lastTarget) }
+                    // 切桌面时别的 App 会在新桌面上到前台，这时浮层不在当前桌面，重新排序会把它带到新桌面上
+                    if self.lastTarget >= 0 && self.spaceState == .none && self.overlay.isOnActiveSpace {
+                        self.overlay.order(.above, relativeTo: self.lastTarget)
+                    }
                 }
             }
             self?.follow()
